@@ -121,14 +121,27 @@ recorded in `results/run_manifest.json` by `aprobe label`.
 
 **A deviation, stated plainly.** The brief asks for the smallest instruction-tuned
 Gemma the library supports, which is `gemma3-270m-it`. We default to the 1B
-instead. On closed-book trivia the 270M model is wrong on nearly every question,
-and a probe that predicts "this answer is wrong" needs both classes present —
-to train on, and to be evaluated against with usable intervals. The notebook
-reports the accuracy it actually gets after 200 questions and warns if it falls
-outside 10–90%, and `MODEL = "gemma3-270m-it"` at the top reproduces the
-literal reading. A T4 is Turing and has no bfloat16 tensor cores, so XLA runs
-these matmuls through float32: correct, but without the speedup newer hardware
-would give.
+instead, because the 270M cannot support the study. Measured on CPU over 96
+questions drawn across the real TriviaQA sample, with the real prompt and the
+real matcher:
+
+| Model | Correct | Refused |
+|---|---|---|
+| `gemma3-270m-it` | 8 / 96 (8.3%) | 16 |
+| `gemma3-1b-it` | 32 / 96 (33.3%) | 1 |
+
+A probe that predicts "this answer is wrong" needs both classes present, to
+train on and to be evaluated against with usable intervals; at 8% correct the
+right-answer class is too thin for either. Reproduce the table with
+`python scripts/model_pilot.py gemma3-270m-it --n 96` (needs the `extract`
+extra). **This is a 96-question pilot on CPU, not a result** — it exists only to
+pick the model before a GPU session is spent. The notebook reports the accuracy
+it actually gets after its first 200 questions and warns outside 10–90%, and
+`MODEL = "gemma3-270m-it"` at the top reproduces the literal reading of the
+brief.
+
+A T4 is Turing and has no bfloat16 tensor cores, so XLA runs these matmuls
+through float32: correct, but without the speedup newer hardware would give.
 
 Hidden states are stored as float16. The residual stream has large outliers —
 measured at 2.2×10⁴ on the 270M model against a float16 ceiling of 6.55×10⁴ —
