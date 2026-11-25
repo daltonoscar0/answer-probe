@@ -121,13 +121,19 @@ def render_results_section(
     excluding_refusals,
     agreement: dict | None,
     examples: dict | None = None,
+    errors: pd.DataFrame | None = None,
     headline_signal: str = "probe_before_linear",
 ) -> str:
     """The whole generated block, from the headline table to the controls."""
     from answer_probe.evaluate import best_baseline_column, signal_label
 
     headline = selection["selection"]["headline"]
-    best_conf = best_baseline_column(metrics)
+    chosen = selection.get("best_confidence_signal")
+    best_conf = (
+        f"conf_{chosen}"
+        if chosen and f"conf_{chosen}" in set(metrics["signal"])
+        else best_baseline_column(metrics)
+    )
     lines = [
         "### Headline",
         "",
@@ -143,8 +149,9 @@ def render_results_section(
         "",
         "### Did the probe beat the model's own confidence?",
         "",
-        f"The strongest confidence baseline on validation was "
-        f"**{signal_label(best_conf)}**.",
+        f"The strongest confidence baseline on the validation split was "
+        f"**{signal_label(best_conf)}**, so that is what the probe is measured "
+        f"against here. The table above reports every baseline.",
         "",
         f"- {comparison_sentence(comparisons, split='test', other=best_conf)}",
         f"- {comparison_sentence(comparisons, split='shift', other=best_conf)}",
@@ -196,6 +203,37 @@ def render_results_section(
                 f"[{row['auroc_low']:.3f}, {row['auroc_high']:.3f}].",
                 "",
             ]
+
+    if errors is not None and len(errors):
+        lines += ["### Where the errors are", ""]
+        main = errors[errors["dataset"] == "triviaqa"]
+        by_type = main[main["grouping"] == "answer_type"].sort_values(
+            "error_rate", ascending=False
+        )
+        if len(by_type):
+            rows = ["| Answer type | Questions | Error rate | Refusal rate |",
+                    "|---|---|---|---|"]
+            for _, row in by_type.iterrows():
+                rows.append(
+                    f"| {row['value']} | {int(row['n'])} | {row['error_rate']:.3f} "
+                    f"| {row['refusal_rate']:.3f} |"
+                )
+            lines += ["By the answer type guessed from the question word, on TriviaQA:",
+                      "", "\n".join(rows), ""]
+        refusal = main[main["grouping"] == "refusal"]
+        if len(refusal) == 2:
+            declined = refusal[refusal["value"] == "refused"].iloc[0]
+            committed = refusal[refusal["value"] != "refused"].iloc[0]
+            lines += [
+                f"The model declined to answer {int(declined['n'])} TriviaQA questions "
+                f"and committed to {int(committed['n'])}. A refusal is always scored "
+                f"wrong; among the answers it did commit to, {committed['error_rate']:.1%} "
+                "were wrong.",
+                "",
+            ]
+        lines += ["Full breakdown, including by question length: "
+                  "[`results/error_concentration.csv`](results/error_concentration.csv).",
+                  ""]
 
     if examples:
         lines += [

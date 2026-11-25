@@ -89,6 +89,7 @@ def run_greedy_pass(
     progress = Progress(total, done_already=start)
     correct_so_far: list[bool] = []
     notes: list[str] = []
+    announced = False
     max_abs = 0.0
     clipped = 0
 
@@ -139,7 +140,10 @@ def run_greedy_pass(
                 )
 
         progress.update(block_start + len(block) - start)
-        if progress.processed >= 100 and (block_start // gen_batch) % 10 == 0:
+        # The first estimate lands as soon as 100 questions are through, so the
+        # run reports how long it will take before it has taken it.
+        if progress.processed >= 100 and (not announced or (block_start // gen_batch) % 10 == 0):
+            announced = True
             log(progress.line(" (greedy pass)"))
         if not notes and len(correct_so_far) >= EARLY_CHECK_AFTER:
             notes = _early_accuracy_note(correct_so_far, progress)
@@ -199,6 +203,7 @@ def run_selfconsistency_pass(
     if start:
         log(f"Resuming after {start} of {total} self-consistency questions.")
     progress = Progress(total, done_already=start)
+    announced = False
 
     for block_start in range(start, total, gen_batch):
         block = questions[block_start : block_start + gen_batch]
@@ -228,7 +233,8 @@ def run_selfconsistency_pass(
             )
 
         progress.update(block_start + len(block) - start)
-        if progress.processed >= 100 and (block_start // gen_batch) % 10 == 0:
+        if progress.processed >= 100 and (not announced or (block_start // gen_batch) % 10 == 0):
+            announced = True
             log(progress.line(" (self-consistency)"))
 
     shards.close()

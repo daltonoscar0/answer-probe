@@ -205,7 +205,14 @@ def evaluate_command(
     comparisons = evaluate.comparison_table(scores, headline_signal, n_boot=n_boot)
     io.write_csv(io.results_dir() / "comparisons.csv", comparisons.round(5))
 
-    best_conf = evaluate.best_baseline_column(metrics)
+    # The baseline the headline runs against was chosen on validation by
+    # `train`; falling back to the strongest on test only if that is missing.
+    chosen = selection.get("best_confidence_signal")
+    best_conf = (
+        f"conf_{chosen}"
+        if chosen and f"conf_{chosen}" in set(metrics["signal"])
+        else evaluate.best_baseline_column(metrics)
+    )
     curve_columns = [headline_signal, best_conf, "combination"]
     rc = evaluate.risk_coverage_table(scores, curve_columns)
     io.write_csv(io.results_dir() / "risk_coverage.csv", rc)
@@ -273,6 +280,9 @@ def report_command(
     agreement_path = results / "label_agreement.json"
     agreement = json.loads(agreement_path.read_text()) if agreement_path.exists() else None
 
+    errors_path = results / "error_concentration.csv"
+    errors = pd.read_csv(errors_path) if errors_path.exists() else None
+
     examples = {}
     for key in ("probe_caught", "confidence_caught"):
         path = results / f"examples_{key}_test.csv"
@@ -289,6 +299,7 @@ def report_command(
         excluding_refusals=excluding,
         agreement=agreement,
         examples=examples,
+        errors=errors,
     )
     _echo(section)
 

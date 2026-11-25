@@ -179,9 +179,10 @@ def calibration_table(scores: pd.DataFrame, prob_column: str, *, n_bins: int = 1
 def best_baseline_column(metrics: pd.DataFrame, *, split: str = TEST) -> str:
     """The confidence baseline with the highest AUROC on a split.
 
-    Used only to decide which line to draw on the plots and which row to put in
-    the headline table; the probe-versus-baseline comparison reports every
-    baseline, so this choice cannot flatter the probe.
+    A fallback. The baseline the headline comparison runs against is chosen on
+    validation by `train` and read from `selection.json`; this is only used when
+    that is unavailable. Either way the comparison table reports every baseline,
+    so the choice cannot quietly flatter the probe.
     """
     frame = metrics[(metrics["split"] == split) & metrics["signal"].str.startswith("conf_")]
     if frame.empty:

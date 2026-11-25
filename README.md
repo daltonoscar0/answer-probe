@@ -96,10 +96,12 @@ aprobe evaluate           # metrics, intervals and the three figures -> results/
 aprobe report --write     # the headline table, spliced into this README
 ```
 
-CPU only, a few minutes end to end. Everything the commands write lands in
-[`results/`](results/), and `aprobe evaluate` never refits anything — it reads
-`results/scores.csv`, so the reported numbers can be recomputed, and checked,
-from a file in the repository.
+CPU only, around 15 minutes end to end on a laptop — most of it `aprobe train`,
+which fits a six-value regularisation grid at each of 28 layers and both
+positions (measured at ~10 s per layer for 4,200 × 1,152 training states).
+Everything the commands write lands in [`results/`](results/), and
+`aprobe evaluate` never refits anything — it reads `results/scores.csv`, so the
+reported numbers can be recomputed, and checked, from a file in the repository.
 
 To see the pipeline run without a GPU or a notebook:
 
