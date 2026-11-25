@@ -96,3 +96,167 @@ def accuracy_sentence(accuracy: pd.DataFrame) -> str:
         for _, row in rows.iterrows()
     ]
     return "Model accuracy -- " + "; ".join(parts) + "."
+
+
+BEGIN_MARKER = "<!-- BEGIN generated: aprobe report -->"
+END_MARKER = "<!-- END generated: aprobe report -->"
+
+NOT_RUN = """
+> **No extraction run yet.** Every number and figure below is written here by
+> `aprobe report --write`, which reads `results/`. Until
+> [`notebooks/extract.ipynb`](notebooks/extract.ipynb) has been run on Colab and
+> its output unzipped to `data/raw/run/`, there is nothing to report, and
+> nothing is filled in by hand.
+"""
+
+
+def render_results_section(
+    *,
+    metrics,
+    comparisons,
+    controls,
+    accuracy,
+    selection,
+    calibration,
+    excluding_refusals,
+    agreement: dict | None,
+    examples: dict | None = None,
+    headline_signal: str = "probe_before_linear",
+) -> str:
+    """The whole generated block, from the headline table to the controls."""
+    from answer_probe.evaluate import best_baseline_column, signal_label
+
+    headline = selection["selection"]["headline"]
+    best_conf = best_baseline_column(metrics)
+    lines = [
+        "### Headline",
+        "",
+        headline_table(metrics, headline_signal=headline_signal),
+        "",
+        f"The headline probe is a linear probe on the residual stream **before "
+        f"answering**, at layer **{headline['layer']}**, with L2 "
+        f"**{headline['l2']}**. Both were chosen on the validation split; the "
+        f"test and shift columns were computed once, afterwards. Intervals are "
+        f"95% percentile bootstrap over questions.",
+        "",
+        "![AUROC by layer](results/layer_curve.png)",
+        "",
+        "### Did the probe beat the model's own confidence?",
+        "",
+        f"The strongest confidence baseline on validation was "
+        f"**{signal_label(best_conf)}**.",
+        "",
+        f"- {comparison_sentence(comparisons, split='test', other=best_conf)}",
+        f"- {comparison_sentence(comparisons, split='shift', other=best_conf)}",
+        "",
+        "### Controls",
+        "",
+        f"- {controls_sentence(controls)}",
+    ]
+
+    surface = metrics[(metrics["split"] == "test") & (metrics["signal"] == "surface")]
+    if not surface.empty:
+        lines.append(
+            f"- Question-surface baseline (question text only): AUROC "
+            f"{surface.iloc[0]['auroc']:.3f} on the TriviaQA test split."
+        )
+    if agreement and agreement.get("n_graded"):
+        lines.append(
+            f"- Label audit: {agreement['agreement']:.1%} agreement with hand "
+            f"grades on {agreement['n_graded']} answers "
+            f"({agreement['n_disagree']} disagreements)."
+        )
+
+    lines += ["", "### Accuracy and calibration", "", f"{accuracy_sentence(accuracy)}", ""]
+    if len(calibration):
+        for _, row in calibration.iterrows():
+            lines.append(
+                f"- {row['split']}: expected calibration error {row['ece']:.3f}, "
+                f"mean predicted P(wrong) {row['mean_predicted']:.3f} against an "
+                f"observed {row['observed_error_rate']:.3f}."
+            )
+        lines += ["", "![Calibration](results/calibration.png)", ""]
+    lines += ["![Selective answering](results/risk_coverage.png)", ""]
+
+    if len(excluding_refusals):
+        rows = excluding_refusals[
+            (excluding_refusals["split"] == "test")
+            & (excluding_refusals["signal"] == headline_signal)
+        ]
+        if not rows.empty:
+            row = rows.iloc[0]
+            lines += [
+                "### With refusals excluded",
+                "",
+                f"The prompt lets the model reply \"unknown\", and a refusal is always "
+                f"scored wrong, so part of what a probe detects could just be \"this "
+                f"one is about to decline\". On the {int(row['n_committed'])} TriviaQA "
+                f"test questions where the model committed to an answer, the probe's "
+                f"AUROC is {row['auroc']:.3f} "
+                f"[{row['auroc_low']:.3f}, {row['auroc_high']:.3f}].",
+                "",
+            ]
+
+    if examples:
+        lines += [
+            "### Where the probe and the confidence signal disagree",
+            "",
+            "Wrong answers on the TriviaQA test split, ranked by how far apart the "
+            "two signals put them. Both columns are percentiles within the split, "
+            "where 1.00 means \"most likely to be wrong\".",
+            "",
+        ]
+        titles = {
+            "probe_caught": "The probe flagged these; the confidence signal did not",
+            "confidence_caught": "The confidence signal flagged these; the probe did not",
+        }
+        for key, title in titles.items():
+            frame = examples.get(key)
+            if frame is None or not len(frame):
+                continue
+            lines += [f"**{title}**", "", _examples_table(frame), ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _examples_table(frame) -> str:
+    header = ["Question", "Model answer", "Gold", "Probe pct", "Confidence pct"]
+    rows = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    for _, row in frame.iterrows():
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    _clip(row["question"], 70),
+                    _clip(str(row["answer"]), 32),
+                    _clip(str(row.get("gold_answer", "")), 28),
+                    f"{row['probe_pct']:.2f}",
+                    f"{row['conf_pct']:.2f}",
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(rows)
+
+
+def _clip(text: str, width: int) -> str:
+    text = " ".join(str(text).split()).replace("|", "\\|")
+    return text if len(text) <= width else text[: width - 1] + "\u2026"
+
+
+def splice_into_readme(path, section: str) -> bool:
+    """Replace the generated block in the README. Returns True if it changed."""
+    from pathlib import Path
+
+    path = Path(path)
+    text = path.read_text()
+    if BEGIN_MARKER not in text or END_MARKER not in text:
+        raise ValueError(
+            f"{path} has no generated block; expected {BEGIN_MARKER} ... {END_MARKER}"
+        )
+    head, rest = text.split(BEGIN_MARKER, 1)
+    _, tail = rest.split(END_MARKER, 1)
+    updated = f"{head}{BEGIN_MARKER}\n\n{section}\n{END_MARKER}{tail}"
+    if updated == text:
+        return False
+    path.write_text(updated)
+    return True

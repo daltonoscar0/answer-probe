@@ -251,28 +251,51 @@ def evaluate_command(
 
 
 @app.command("report")
-def report_command() -> None:
-    """Print the headline table as Markdown."""
-    metrics = pd.read_csv(io.results_dir() / "metrics.csv")
-    comparisons = pd.read_csv(io.results_dir() / "comparisons.csv")
-    controls = pd.read_csv(io.results_dir() / "controls.csv")
-    accuracy = pd.read_csv(io.results_dir() / "accuracy.csv")
-    selection = json.loads((io.results_dir() / "selection.json").read_text())
-    headline = selection["selection"]["headline"]
-    scan = pd.read_csv(io.results_dir() / "layer_scan.csv")
-    n_layers = scan["layer"].nunique()
+def report_command(
+    write: bool = typer.Option(
+        False, "--write", help="Splice the results into README.md as well as printing them."
+    ),
+    readme: Path = typer.Option(None, help="README to update (default: the repo's)."),
+) -> None:
+    """Print the headline table as Markdown, and optionally update the README.
 
-    _echo(report.headline_table(metrics, headline_signal="probe_before_linear"))
-    _echo("")
-    _echo(
-        f"Headline probe: linear probe on the residual stream before answering, "
-        f"layer {headline['layer']} of {n_layers} scanned, chosen on the validation split."
+    Everything printed here is read from `results/`. Nothing in the README's
+    generated block is ever typed by hand, so the two cannot disagree.
+    """
+    results = io.results_dir()
+    metrics = pd.read_csv(results / "metrics.csv")
+    comparisons = pd.read_csv(results / "comparisons.csv")
+    controls = pd.read_csv(results / "controls.csv")
+    accuracy = pd.read_csv(results / "accuracy.csv")
+    calibration = pd.read_csv(results / "calibration.csv")
+    excluding = pd.read_csv(results / "excluding_refusals.csv")
+    selection = json.loads((results / "selection.json").read_text())
+    agreement_path = results / "label_agreement.json"
+    agreement = json.loads(agreement_path.read_text()) if agreement_path.exists() else None
+
+    examples = {}
+    for key in ("probe_caught", "confidence_caught"):
+        path = results / f"examples_{key}_test.csv"
+        if path.exists():
+            examples[key] = pd.read_csv(path)
+
+    section = report.render_results_section(
+        metrics=metrics,
+        comparisons=comparisons,
+        controls=controls,
+        accuracy=accuracy,
+        selection=selection,
+        calibration=calibration,
+        excluding_refusals=excluding,
+        agreement=agreement,
+        examples=examples,
     )
-    _echo(report.accuracy_sentence(accuracy))
-    best_conf = evaluate.best_baseline_column(metrics)
-    _echo(report.comparison_sentence(comparisons, split="test", other=best_conf))
-    _echo(report.comparison_sentence(comparisons, split="shift", other=best_conf))
-    _echo(report.controls_sentence(controls))
+    _echo(section)
+
+    if write:
+        target = Path(readme) if readme else io.REPO_ROOT / "README.md"
+        changed = report.splice_into_readme(target, section)
+        _echo(f"{'Updated' if changed else 'No change to'} {target}")
 
 
 def main() -> None:
