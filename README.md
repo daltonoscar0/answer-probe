@@ -9,8 +9,8 @@ two positions — the last token of the prompt, *before any answer token exists*
 and the last token of the answer — then asks whether a linear probe on those
 states predicts errors better than the model's own confidence (first-token
 probability, answer log-probability, entropy, and 8-sample self-consistency).
-The probe is trained only on TriviaQA and tested again on Natural Questions to
-see whether what it learned transfers.
+The probe is trained only on TriviaQA and then tested on Natural Questions,
+which it never saw, to ask whether what it learned transfers.
 
 **Either answer is a result.** A probe that beats confidence is useful for
 reliability; one that does not is worth knowing. The analysis is deliberately
@@ -59,6 +59,8 @@ What *is* verified, offline and in CI:
 ## Reproducing it
 
 ### 1. The GPU half, on Colab
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/daltonoscar0/answer-probe/blob/main/notebooks/extract.ipynb)
 
 Open [`notebooks/extract.ipynb`](notebooks/extract.ipynb) in Colab, choose
 **Runtime → Change runtime type → T4 GPU**, and **Run all**. It mounts Google
