@@ -195,3 +195,35 @@ def test_controls_sentence_reports_the_range_not_just_the_mean():
     assert "3 permutations" in sentence
     assert "0.503" in sentence and "0.480" in sentence and "0.520" in sentence
     assert "in sample" in sentence
+
+
+def test_the_colab_badge_opens_this_repos_notebook_from_main():
+    """A badge pointing at the wrong branch silently runs stale code."""
+    text = README.read_text()
+    url = (
+        "https://colab.research.google.com/github/daltonoscar0/answer-probe/"
+        "blob/main/notebooks/extract.ipynb"
+    )
+    assert url in text
+    assert (README.parent / "notebooks" / "extract.ipynb").exists()
+
+
+def test_the_readme_estimates_the_t4_runtime_next_to_the_badge():
+    """Several hours of GPU time should not be a surprise discovered halfway in."""
+    text = README.read_text()
+    badge_at = text.index("colab-badge.svg")
+    estimate_at = text.index("hours of T4 time")
+    assert 0 < estimate_at - badge_at < 2000, (
+        "the runtime estimate must sit next to the Colab badge, not elsewhere"
+    )
+    # The configured question count, so the estimate is tied to a real workload.
+    from answer_probe.data import N_SHIFT, N_TRIVIAQA
+
+    assert f"{N_TRIVIAQA + N_SHIFT:,}" in text
+
+
+def test_the_readme_says_the_run_will_need_more_than_one_session():
+    """The checkpointing is load-bearing, not a nicety, and the README says so."""
+    text = README.read_text()
+    assert "more than one session" in text
+    assert "Run all" in text

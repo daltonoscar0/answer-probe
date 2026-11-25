@@ -170,3 +170,123 @@ def test_the_notebook_explains_the_model_choice(notebook):
     config = code_cells(notebook)[0]
     assert "gemma3-270m-it" in config
     assert "correctness probe needs" in config
+
+
+def test_the_default_model_is_the_one_the_study_uses(notebook):
+    """gemma3-1b-it, not the 270M.
+
+    The 270M model got 8% of closed-book trivia right, which leaves almost no
+    correct answers for a correctness probe to learn from, so it was dropped as
+    the study model and kept only as a fast option. A default that quietly
+    reverted to it would produce a run that looks complete and answers nothing,
+    which is the expensive kind of mistake here — several hours of T4 time.
+    """
+    config = code_cells(notebook)[0]
+    assigned = [
+        line.split("=", 1)[1].strip().strip('"').strip("'")
+        for line in config.splitlines()
+        if line.startswith("MODEL =")
+    ]
+    assert assigned == ["gemma3-1b-it"], f"MODEL assignments in the config cell: {assigned}"
+
+
+def test_no_later_cell_reassigns_the_model(notebook):
+    """`MODEL` is set once, in the configuration cell, and not again."""
+    for i, source in enumerate(code_cells(notebook)[1:], start=1):
+        for line in source.splitlines():
+            assert not line.startswith("MODEL ="), (
+                f"code cell {i} reassigns MODEL; it belongs only in the config cell"
+            )
+
+
+def test_the_notebook_resumes_from_drive_rather_than_starting_over(notebook):
+    """A disconnect must cost the session, not the run."""
+    joined = "\n".join(code_cells(notebook))
+    assert 'drive.mount("/content/drive")' in joined
+    # Checkpoint directories live on Drive, not in the ephemeral /content.
+    assert 'DRIVE_ROOT = "/content/drive/MyDrive/answer-probe"' in joined
+    for name in ("CKPT_GREEDY", "CKPT_SELFCONS"):
+        assert name in joined, f"{name} is how a pass finds its own checkpoints"
+    # Both passes are handed their shard dir, which is what makes them resumable.
+    assert joined.count("shard_dir=") >= 2
+    # The sampled questions are reused too, so a resumed run asks the same ones.
+    assert "Reusing the sampled questions from Drive" in joined
+
+
+def test_the_notebook_ends_with_a_pasteable_run_summary(notebook):
+    """The last cell's output is what Oscar sends back, so it is pinned here."""
+    last = code_cells(notebook)[-1]
+    assert "answer-probe run summary" in last
+    for field in (
+        "model",
+        "questions",
+        "greedy answers",
+        "self-consistency",
+        "accuracy",
+        "activations",
+        "bfloat16 range",
+        "this session",
+        "versions",
+    ):
+        assert field in last, f"the run summary omits {field!r}"
+    # It warns rather than reporting clipped activations as a clean run.
+    assert "values were clipped" in last
+    # And it is saved to Drive, so a closed tab does not lose it.
+    assert 'run_summary.txt' in last
+
+
+def test_the_run_summary_uses_only_names_the_notebook_has_bound(notebook):
+    """A NameError here lands after hours of GPU time, so it is checked statically.
+
+    Every name the summary reads must be assigned, imported or bound by an
+    earlier cell. Builtins and the summary's own locals are allowed.
+    """
+    import builtins
+
+    cells = code_cells(notebook)
+    bound: set[str] = set(dir(builtins))
+
+    def collect(tree: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                # Walk the targets: `a, b = ...` is a Tuple, not a Name.
+                for target in node.targets:
+                    names |= {
+                        n.id for n in ast.walk(target) if isinstance(n, ast.Name)
+                    }
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                names |= {a.asname or a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, (ast.For, ast.comprehension)):
+                target = node.target
+                names |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+            elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+                names |= {
+                    n.id for n in ast.walk(node.optional_vars) if isinstance(n, ast.Name)
+                }
+        return names
+
+    def parsed(source: str) -> ast.AST:
+        return ast.parse(
+            "\n".join(
+                "pass" if line.strip().startswith(("%", "!")) else line
+                for line in source.splitlines()
+            )
+        )
+
+    for source in cells[:-1]:
+        bound |= collect(parsed(source))
+
+    summary = parsed(cells[-1])
+    read = {
+        node.id
+        for node in ast.walk(summary)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    missing = sorted(read - bound - collect(summary))
+    assert not missing, f"the run summary reads names nothing binds: {missing}"

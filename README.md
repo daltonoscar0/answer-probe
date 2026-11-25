@@ -71,6 +71,31 @@ resumed by opening it again and running all: it picks up from the last
 checkpoint rather than starting over. It prints a rate and a time-remaining
 estimate as it goes, and an accuracy read after the first 200 questions.
 
+**Expect roughly 2–3 hours of T4 time, over more than one session.** The
+configured run is 8,000 questions, and the work divides like this:
+
+| Stage | Work | Share of the time |
+| :-- | --: | :-- |
+| Greedy answers | 8,000 generations of ≤32 tokens | ~20 min |
+| Hidden-state extraction | 8,000 teacher-forced forward passes, batch 8 | ~25 min |
+| Self-consistency | 3,800 questions × 8 samples = 30,400 generations | ~60–90 min |
+| Load, datasets, Drive writes | 1.03 GB of bfloat16 activations in 250-question shards | ~15 min |
+
+That is an estimate from the token counts and the T4's 320 GB/s of memory
+bandwidth, not a measurement — decoding a 1B model is bandwidth-bound, and the
+batch of 32 is what keeps it off the floor. Two things push it to the slow end:
+a T4 is Turing, so it has no bfloat16 tensor cores and XLA runs these matmuls
+through float32, and the extraction pass materialises a vocab-sized logits
+tensor that is the real constraint on `EXTRACT_BATCH`. **The notebook's own
+projection, printed after the first shard of 250 questions, is the number to
+trust over this table.**
+
+A free Colab session is unlikely to hold for the whole run, which is why the
+checkpointing exists rather than being a nicety: when the session drops, reopen
+the notebook and **Run all**. Nothing already computed is recomputed. The
+greedy pass completes and is saved in full before the self-consistency pass
+starts, so even a run that never finishes leaves the core dataset usable.
+
 **About the Hugging Face token.** The brief assumed one would be needed. It is
 not, for the weights: the JAX `gemma` library distributes Gemma from the public
 `gs://gemma-data` bucket rather than the Hub, and the notebook fetches the

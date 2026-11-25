@@ -228,6 +228,7 @@ from answer_probe.extract import (
 )
 from answer_probe.prompts import INSTRUCTION, PROMPT_VERSION, build_prompt
 from answer_probe.extract import CHECKPOINTS
+from answer_probe.shards import format_duration
 
 t0 = time.time()
 model, params, tokenizer = load_model(MODEL, dtype=MODEL_DTYPE, cache_dir=WEIGHTS_CACHE)
@@ -361,6 +362,7 @@ sample_sampler = build_sampler(
     temperature=SELFCONS_TEMPERATURE,
 )
 
+_selfcons_t0 = time.time()
 selfcons = run_selfconsistency_pass(
     sample_sampler,
     [by_qid[q] for q in selfcons_qids],
@@ -373,6 +375,9 @@ selfcons = run_selfconsistency_pass(
     n_samples=N_SELFCONS_SAMPLES,
     seed=SELFCONS_SEED,
 )
+# Wall clock for this cell only. On a resumed run it covers what this session
+# did, not the whole pass, and the summary below says so.
+selfcons_elapsed = time.time() - _selfcons_t0
 print(f"{len(selfcons)} self-consistency records of {len(selfcons_qids)} expected")
 '''
 )
@@ -440,6 +445,52 @@ shutil.copy(archive, Path(DRIVE_ROOT) / f"{OUTPUT_NAME}.zip")
 
 from google.colab import files
 files.download(archive)
+'''
+)
+
+md(
+    """
+## Run summary
+
+Short enough to paste back into a chat or an issue, and it carries the things
+worth knowing without the questions, the answers or anything else that only
+matters to the pipeline. No token and no file path outside `/content` appears
+in it.
+"""
+)
+
+code(
+    '''
+# Everything here is already computed; this cell only formats it.
+sc_per_q = N_SELFCONS_SAMPLES
+lines = [
+    "answer-probe run summary",
+    f"  model            {MODEL} ({MODEL_DTYPE}), on {jax.devices()[0].device_kind}",
+    f"  questions        {len(questions)} "
+    f"({', '.join(f'{k} {len(v)}' for k, v in splits.items())})",
+    f"  greedy answers   {len(generations)} at <={MAX_NEW_TOKENS} new tokens",
+    f"  self-consistency {len(selfcons)} records "
+    f"({len(selfcons) // sc_per_q if sc_per_q else 0} questions x {sc_per_q})",
+    f"  accuracy         TriviaQA {correct[is_main].mean():.1%} correct, "
+    f"{refused[is_main].mean():.1%} refused",
+    f"                   NQ-open  {correct[~is_main].mean():.1%} correct, "
+    f"{refused[~is_main].mean():.1%} refused",
+    f"  activations      before {hidden_before.shape} {hidden_before.dtype}, "
+    f"after {hidden_after.shape}; {N_LAYERS} recorded layers, hidden {HIDDEN}",
+    f"  bfloat16 range   max |value| {greedy.max_abs_residual:.3g} "
+    f"(ceiling {BF16_MAX:.3g}), {greedy.values_out_of_range} clipped",
+    f"  this session     greedy {format_duration(greedy.elapsed_seconds)}, "
+    f"self-consistency {format_duration(selfcons_elapsed)} "
+    f"(a resumed run only times what it did itself)",
+    f"  archive          {Path(archive).name}, {size_mb:.0f} MB",
+    f"  versions         answer-probe {answer_probe.__version__}, "
+    f"jax {jax.__version__}, gemma {getattr(gm, '__version__', 'unknown')}",
+]
+if greedy.values_out_of_range:
+    lines.append("  WARNING: values were clipped; the activations are not faithful.")
+print("\\n".join(lines))
+
+(Path(DRIVE_ROOT) / "run_summary.txt").write_text("\\n".join(lines) + "\\n")
 '''
 )
 
