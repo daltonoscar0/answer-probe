@@ -291,3 +291,44 @@ def test_grading_sample_is_stratified_by_automatic_label(pipeline):
     correct = labels.loc[graded, "correct"]
     assert correct.sum() == 30
     assert (1 - correct).sum() == 30
+
+
+def test_reported_metrics_are_recomputable_from_the_scores_file(pipeline):
+    """Every headline number must be derivable from a committed file.
+
+    `metrics.csv` is recomputed here straight from `scores.csv` with the metric
+    functions, independently of the code path `aprobe evaluate` took. If these
+    ever disagree, a number in the README is not backed by the data in the repo.
+    """
+    from answer_probe.metrics import accuracy_at_coverage, auprc, auroc
+
+    root, _ = pipeline
+    scores = pd.read_csv(_results(root) / "scores.csv")
+    metrics = pd.read_csv(_results(root) / "metrics.csv")
+
+    checked = 0
+    for _, row in metrics.iterrows():
+        frame = scores[scores["split"] == row["split"]]
+        y = frame["wrong"].to_numpy(dtype=int)
+        s = frame[row["signal"]].to_numpy(dtype=float)
+        assert row["auroc"] == pytest.approx(auroc(s, y), abs=1e-5)
+        assert row["auprc"] == pytest.approx(auprc(s, y), abs=1e-5)
+        assert row["acc_at_80"] == pytest.approx(accuracy_at_coverage(s, y, 0.8), abs=1e-5)
+        assert row["acc_at_50"] == pytest.approx(accuracy_at_coverage(s, y, 0.5), abs=1e-5)
+        assert row["error_rate"] == pytest.approx(y.mean(), abs=1e-4)
+        checked += 1
+    assert checked >= 18, "expected every signal on both splits"
+
+
+def test_bootstrap_intervals_are_reproducible(pipeline):
+    """Re-running evaluate must give the same intervals, not just the same points."""
+    from typer.testing import CliRunner
+
+    root, _ = pipeline
+    first = pd.read_csv(_results(root) / "metrics.csv")
+    result = CliRunner().invoke(
+        cli.app, ["evaluate", "--run-dir", str(root / "run"), "--n-boot", "80"]
+    )
+    assert result.exit_code == 0, result.output
+    again = pd.read_csv(_results(root) / "metrics.csv")
+    pd.testing.assert_frame_equal(first, again)
