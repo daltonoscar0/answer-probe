@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -250,6 +251,73 @@ def to_float16(array: np.ndarray) -> tuple[np.ndarray, int]:
     return np.clip(finite, -FP16_MAX, FP16_MAX).astype(np.float16), n_clipped
 
 
+GEMMA_BUCKET = "gemma-data"
+_GCS_LIST = "https://storage.googleapis.com/storage/v1/b/{bucket}/o"
+_GCS_GET = "https://storage.googleapis.com/{bucket}/{name}"
+
+
+def download_checkpoint(checkpoint_path: str, dest, *, progress: bool = True) -> Path:
+    """Copy a `gs://gemma-data/...` checkpoint to local disk over plain HTTPS.
+
+    The bucket is public, so no credentials are needed and no Hugging Face
+    token is involved: the JAX `gemma` library distributes weights here, not on
+    the Hub. Orbax can read `gs://` paths directly, but it goes through
+    google-cloud-storage, which spends a while failing to find credentials
+    first. Fetching the objects over plain HTTPS is simpler, and because files
+    already present with the right size are skipped, the destination can live
+    on Drive and survive a disconnected Colab session.
+    """
+    import urllib.parse
+    import urllib.request
+
+    if not checkpoint_path.startswith("gs://"):
+        return Path(checkpoint_path).resolve()
+    bucket, _, prefix = checkpoint_path[len("gs://") :].partition("/")
+    prefix = prefix.rstrip("/") + "/"
+    # Absolute: orbax rejects relative checkpoint paths, and the error it gives
+    # for a relative one is reported as missing metadata rather than a bad path.
+    dest = Path(dest).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    objects, token = [], None
+    while True:
+        query = {"prefix": prefix, "fields": "items(name,size),nextPageToken"}
+        if token:
+            query["pageToken"] = token
+        url = _GCS_LIST.format(bucket=bucket) + "?" + urllib.parse.urlencode(query)
+        with urllib.request.urlopen(url) as response:  # noqa: S310
+            import json as _json
+
+            payload = _json.load(response)
+        objects.extend(payload.get("items", []))
+        token = payload.get("nextPageToken")
+        if not token:
+            break
+    if not objects:
+        raise RuntimeError(f"no objects under {checkpoint_path}")
+
+    total = sum(int(o["size"]) for o in objects)
+    done = 0
+    for obj in objects:
+        name = obj["name"]
+        size = int(obj["size"])
+        # Orbax writes placeholder "<dir>_$folder$" markers; they are not files.
+        if name.endswith("/") or name.endswith("_$folder$"):
+            done += size
+            continue
+        target = dest / name[len(prefix) :]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.stat().st_size == size:
+            done += size
+            continue
+        url = _GCS_GET.format(bucket=bucket, name=urllib.parse.quote(name))
+        urllib.request.urlretrieve(url, target)  # noqa: S310
+        done += size
+        if progress:
+            print(f"  {done / 1e6:7.0f} / {total / 1e6:.0f} MB  {target.name}", flush=True)
+    return dest
+
+
 def terminator_ids(tokenizer) -> set[int]:
     """Token ids that end a model turn and are not part of the answer text."""
     special = type(tokenizer).special_tokens
@@ -289,19 +357,35 @@ def build_sampler(
     )
 
 
-def generate(sampler, prompts: list[str], *, max_new_tokens: int, rng=None):
-    """Answer a batch of prompts. Returns (texts, token id lists)."""
+def generate(
+    sampler,
+    prompts: list[str],
+    *,
+    max_new_tokens: int,
+    terminators: set[int],
+    rng=None,
+) -> tuple[list[str], list[list[int]]]:
+    """Answer a batch of prompts. Returns (answer texts, answer token ids).
+
+    The text is decoded from the same token ids that are returned, after the
+    end-of-turn marker is stripped, so the saved answer string and the tokens
+    the forward pass scores are always the same thing. The sampler's own
+    `.text` keeps the literal `<end_of_turn>` in the string.
+    """
     out = sampler.sample(
         prompts,
         max_new_tokens=max_new_tokens,
         return_state=True,
         **({} if rng is None else {"rng": rng}),
     )
-    texts = out.text if isinstance(out.text, list) else [out.text]
     tokens = np.asarray(out.tokens)
     if tokens.ndim == 1:
         tokens = tokens[None, :]
-    ids = [[int(t) for t in row if int(t) != PAD_ID] for row in tokens]
+    ids = [
+        strip_terminators([int(t) for t in row if int(t) != PAD_ID], terminators)
+        for row in tokens
+    ]
+    texts = [sampler.tokenizer.decode(row).strip() if row else "" for row in ids]
     return texts, ids
 
 

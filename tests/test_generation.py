@@ -19,7 +19,6 @@ from answer_probe.extract import (  # noqa: E402
     build_sampler,
     extract_batch,
     generate,
-    strip_terminators,
     terminator_ids,
     tiny_model,
 )
@@ -87,16 +86,18 @@ def test_greedy_generation_and_extraction_run_end_to_end(tokenizer, tiny_full_vo
     )
     questions = ["Who wrote Ulysses?", "What is the capital of Peru?"]
     prompts = [build_prompt(q) for q in questions]
-    texts, token_ids = generate(sampler, prompts, max_new_tokens=4)
+    terminators = terminator_ids(tokenizer)
+    texts, answer_ids = generate(
+        sampler, prompts, max_new_tokens=4, terminators=terminators
+    )
 
     assert len(texts) == 2
     assert all(isinstance(t, str) for t in texts)
-    assert all(len(ids) <= 4 for ids in token_ids)
+    assert all(len(ids) <= 4 for ids in answer_ids)
+    # The saved text is decoded from the saved ids, so no turn marker survives.
+    assert not any("<end_of_turn>" in t for t in texts)
 
-    terminators = terminator_ids(tokenizer)
     prompt_ids = [tokenizer.encode(p, add_bos=True) for p in prompts]
-    answer_ids = [strip_terminators(ids, terminators) for ids in token_ids]
-
     out = extract_batch(model, params, prompt_ids, answer_ids, max_answer_tokens=4)
     assert out.before.shape == (2, 4, 32)  # 2 blocks + embeddings + final norm
     assert np.all(np.isfinite(out.before))
@@ -115,6 +116,11 @@ def test_temperature_sampling_is_seeded_and_varies(tokenizer, tiny_full_vocab):
         temperature=1.0,
     )
     prompts = [build_prompt("Who wrote Ulysses?")]
-    first, first_ids = generate(sampler, prompts, max_new_tokens=4, rng=0)
-    again, again_ids = generate(sampler, prompts, max_new_tokens=4, rng=0)
+    terminators = terminator_ids(tokenizer)
+    first, first_ids = generate(
+        sampler, prompts, max_new_tokens=4, terminators=terminators, rng=0
+    )
+    again, again_ids = generate(
+        sampler, prompts, max_new_tokens=4, terminators=terminators, rng=0
+    )
     assert (first, first_ids) == (again, again_ids), "same seed must give the same sample"
