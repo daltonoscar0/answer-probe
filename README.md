@@ -242,6 +242,7 @@ src/answer_probe/
   extract.py     residual-stream recording, generation, checkpoint download
   pipeline.py    the notebook's two GPU passes
   shards.py      resumable checkpointing for a session that may be cut off
+  io.py          paths, and reading the run folder (activations memory-mapped)
   normalize.py   answer normalization and alias matching
   labeling.py    correctness labels and the human-agreement audit
   probes.py      the linear probe (Optax) and the difference-of-means probe
