@@ -36,12 +36,23 @@ def pack_bfloat16(array: np.ndarray) -> np.ndarray:
 
 
 def unpack_bfloat16(array: np.ndarray) -> np.ndarray:
-    """uint16 (or an unrecognised 2-byte dtype) read from disk -> bfloat16."""
+    """uint16 (or an unrecognised 2-byte dtype) read from disk -> bfloat16.
+
+    Deliberately strict about which dtypes may be reinterpreted. float16 is
+    also two bytes wide, and viewing float16 bits as bfloat16 would succeed
+    silently and return numbers that look plausible and are wrong, so an
+    activation file written by an older float16 run is rejected rather than
+    misread.
+    """
     if array.dtype == BF16:
         return array
-    if array.dtype.itemsize != 2:
-        raise ValueError(f"expected a 2-byte dtype for bfloat16 storage, got {array.dtype}")
-    return array.view(BF16)
+    if array.dtype == np.uint16 or array.dtype.kind == "V":
+        return array.view(BF16)
+    raise ValueError(
+        f"activations have dtype {array.dtype}, which is not bfloat16 storage. "
+        "Activation files hold uint16 bit patterns; re-run the extraction "
+        "notebook to regenerate a run written before bfloat16 storage."
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

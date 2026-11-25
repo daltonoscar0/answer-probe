@@ -162,3 +162,26 @@ def test_progress_is_patient_before_the_first_update():
     progress = Progress(1000, clock=FakeClock())
     assert progress.remaining() == float("inf")
     assert "left" in progress.line()
+
+
+def test_unpack_rejects_float16_instead_of_misreading_it():
+    """float16 is also two bytes; viewing its bits as bfloat16 would be silent."""
+    from answer_probe.io import pack_bfloat16, unpack_bfloat16
+
+    values = np.array([[1.0, 2.5, -3.75]], dtype=np.float32)
+    packed = pack_bfloat16(values.astype(BF16))
+    assert packed.dtype == np.uint16
+    np.testing.assert_array_equal(
+        unpack_bfloat16(packed).astype(np.float32), values.astype(BF16).astype(np.float32)
+    )
+    with pytest.raises(ValueError, match="not bfloat16 storage"):
+        unpack_bfloat16(values.astype(np.float16))
+    with pytest.raises(ValueError, match="not bfloat16 storage"):
+        unpack_bfloat16(values.astype(np.float32))
+
+
+def test_unpack_passes_bfloat16_through_unchanged():
+    from answer_probe.io import unpack_bfloat16
+
+    array = np.array([[1.0, 2.0]], dtype=np.float32).astype(BF16)
+    assert unpack_bfloat16(array) is array
