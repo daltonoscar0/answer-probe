@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: analysis (no GPU, no model)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests scripts
+
+      # Everything here runs offline on synthetic fixtures: the labelling, the
+      # probes, the metrics and the full label -> train -> evaluate -> report
+      # pipeline. The tests that need the `gemma` library skip in this job and
+      # run in the one below.
+      - name: Tests
+        run: pytest -q
+
+      - name: The notebook matches its generator
+        run: |
+          python scripts/build_notebook.py
+          git diff --exit-code notebooks/
+
+  extraction:
+    name: extraction (tiny model on CPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # `gemma` pulls kauldron, orbax and tensorflow-cpu. protobuf is pinned up
+      # because sentencepiece ships generated code needing a 7.x runtime -- the
+      # same pin the Colab notebook applies.
+      - name: Install with the extraction extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,extract]" "protobuf>=7.36.1"
+
+      # Exercises the real extraction code on a randomly initialised Gemma 3 of
+      # toy size: the residual-stream recording, padding invariance, the claim
+      # that the "before answering" state is uncontaminated by the answer, and
+      # both notebook passes feeding the analysis CLI. No GPU, no weights.
+      - name: Extraction tests
+        run: pytest -q tests/test_extract.py tests/test_generation.py tests/test_pipeline_gpu_path.py

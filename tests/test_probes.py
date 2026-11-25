@@ -149,3 +149,13 @@ def test_training_is_deterministic():
     again = fit_linear_probe(x, y, l2=1e-3)
     np.testing.assert_array_equal(first.weights, again.weights)
     assert first.bias == again.bias
+
+
+def test_a_single_class_split_is_reported_clearly():
+    """A probe cannot be fitted when every answer is wrong; say so plainly."""
+    x, y, _ = synthetic(200, seed=18)
+    x_val, y_val, _ = synthetic(100, seed=19)
+    with pytest.raises(ValueError, match="only one class"):
+        select_linear_probe(x, np.ones_like(y), x_val, y_val)
+    with pytest.raises(ValueError, match="only one class"):
+        select_linear_probe(x, y, x_val, np.zeros_like(y_val))

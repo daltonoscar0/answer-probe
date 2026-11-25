@@ -170,3 +170,25 @@ def test_to_float16_leaves_ordinary_values_alone():
     out, n_clipped = to_float16(array)
     assert n_clipped == 0
     np.testing.assert_allclose(out.astype(np.float32), array, rtol=1e-3, atol=1e-3)
+
+
+def test_checkpoint_registry_matches_the_library():
+    """Each registered model resolves to a real class with the recorded shape."""
+    from gemma import gm
+
+    from answer_probe.extract import CHECKPOINTS
+
+    assert "gemma3-1b-it" in CHECKPOINTS and "gemma3-270m-it" in CHECKPOINTS
+    for name, spec in CHECKPOINTS.items():
+        cls = getattr(gm.nn, spec["class"])
+        assert cls.config.num_layers == spec["n_blocks"], name
+        assert cls.config.embed_dim == spec["hidden_size"], name
+        assert spec["path"].startswith("gs://gemma-data/checkpoints/"), name
+        assert cls.INFO.tokenizer_version == 3, name
+
+
+def test_load_model_rejects_an_unknown_name():
+    from answer_probe.extract import load_model
+
+    with pytest.raises(KeyError, match="unknown model"):
+        load_model("gemma3-70b-it")

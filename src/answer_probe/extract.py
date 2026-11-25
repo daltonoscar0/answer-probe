@@ -251,6 +251,55 @@ def to_float16(array: np.ndarray) -> tuple[np.ndarray, int]:
     return np.clip(finite, -FP16_MAX, FP16_MAX).astype(np.float16), n_clipped
 
 
+# The instruction-tuned Gemma 3 text models that fit a T4 in bfloat16, with the
+# public checkpoint each one loads from. `n_blocks` is recorded so a run can be
+# checked against the architecture it claims to come from; the saved arrays have
+# `n_blocks + 2` layers (embeddings and the final norm).
+CHECKPOINTS: dict[str, dict] = {
+    "gemma3-270m-it": {
+        "class": "Gemma3_270M",
+        "path": "gs://gemma-data/checkpoints/gemma3-270m-it",
+        "n_blocks": 18,
+        "hidden_size": 640,
+    },
+    "gemma3-1b-it": {
+        "class": "Gemma3_1B",
+        "path": "gs://gemma-data/checkpoints/gemma3-1b-it",
+        "n_blocks": 26,
+        "hidden_size": 1152,
+    },
+    "gemma3-4b-it": {
+        "class": "Gemma3_4B",
+        "path": "gs://gemma-data/checkpoints/gemma3-4b-it",
+        "n_blocks": 34,
+        "hidden_size": 2560,
+    },
+}
+
+
+def load_model(name: str, *, dtype: str = "bfloat16", cache_dir="checkpoints"):
+    """Build the residual-recording model, restore its weights, and tokenize.
+
+    Returns `(model, params, tokenizer)`.
+    """
+    from gemma import gm
+
+    if name not in CHECKPOINTS:
+        raise KeyError(f"unknown model {name!r}; known: {sorted(CHECKPOINTS)}")
+    spec = CHECKPOINTS[name]
+    local = download_checkpoint(spec["path"], Path(cache_dir) / name)
+    base_cls = getattr(gm.nn, spec["class"])
+    model = residual_model_class(base_cls)(dtype=getattr(jnp, dtype))
+    params = gm.ckpts.load_params(str(local), text_only=True)
+    tokenizer = gm.text.Tokenizer.from_version(base_cls.INFO.tokenizer_version)
+
+    if model.config.num_layers != spec["n_blocks"]:
+        raise RuntimeError(
+            f"{name} has {model.config.num_layers} blocks, expected {spec['n_blocks']}"
+        )
+    return model, params, tokenizer
+
+
 GEMMA_BUCKET = "gemma-data"
 _GCS_LIST = "https://storage.googleapis.com/storage/v1/b/{bucket}/o"
 _GCS_GET = "https://storage.googleapis.com/{bucket}/{name}"

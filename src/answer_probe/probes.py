@@ -134,6 +134,15 @@ def select_linear_probe(
     if score_fn is None:
         from answer_probe.metrics import auroc as score_fn  # noqa: N813
 
+    for name, labels in (("training", y_train), ("validation", y_val)):
+        distinct = np.unique(np.asarray(labels))
+        if distinct.size < 2:
+            raise ValueError(
+                f"the {name} split has only one class (all "
+                f"{'wrong' if distinct[0] == 1 else 'correct'} answers), so there is "
+                "nothing for a correctness probe to separate"
+            )
+
     standardizer = Standardizer.fit(x_train)
     trace: list[dict] = []
     best: LinearProbe | None = None
