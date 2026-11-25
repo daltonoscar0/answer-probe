@@ -57,19 +57,46 @@ def headline_table(
     return "\n".join(lines)
 
 
-def comparison_sentence(comparisons: pd.DataFrame, *, split: str, other: str) -> str:
-    """One sentence on whether the probe beat a baseline, with the paired interval."""
-    row = comparisons[(comparisons["split"] == split) & (comparisons["other"] == other)]
+def _combined_vs(comparisons: pd.DataFrame, other: str) -> str:
+    """The combination against one of its own two inputs, on the test split."""
+    return comparison_sentence(
+        comparisons,
+        split="test",
+        other=other,
+        reference="combination",
+        subject="the two-feature combination",
+    )
+
+
+def comparison_sentence(
+    comparisons: pd.DataFrame,
+    *,
+    split: str,
+    other: str,
+    reference: str = "probe_before_linear",
+    subject: str = "the probe",
+) -> str:
+    """One sentence on whether one signal beat another, with the paired interval."""
+    row = comparisons[
+        (comparisons["split"] == split)
+        & (comparisons["other"] == other)
+        & (comparisons["reference"] == reference)
+    ]
     if row.empty:
         return f"No comparison available against {other} on {split}."
     row = row.iloc[0]
+    against = row.get("other_label") or other
     verdict = (
-        "beats it"
+        f"beats {against}"
         if row["reference_better"]
-        else ("is indistinguishable from it" if row["indistinguishable"] else "loses to it")
+        else (
+            f"is indistinguishable from {against}"
+            if row["indistinguishable"]
+            else f"loses to {against}"
+        )
     )
     return (
-        f"On {SPLIT_LABELS.get(split, split)} the probe {verdict}: AUROC difference "
+        f"On {SPLIT_LABELS.get(split, split)} {subject} {verdict}: AUROC difference "
         f"{row['auroc_difference']:+.3f} "
         f"[{row['auroc_difference_low']:+.3f}, {row['auroc_difference_high']:+.3f}] "
         "(paired bootstrap over questions)."
@@ -156,6 +183,15 @@ def render_results_section(
         f"- {comparison_sentence(comparisons, split='test', other=best_conf)}",
         f"- {comparison_sentence(comparisons, split='shift', other=best_conf)}",
         "",
+        "",
+        "### Does combining the two help?",
+        "",
+        f"- {_combined_vs(comparisons, headline_signal)}",
+        f"- {_combined_vs(comparisons, best_conf)}",
+        "",
+        "The combination is a two-feature logistic model on (probe score, "
+        "confidence signal), fitted on the validation split.",
+        "",
         "### Controls",
         "",
         f"- {controls_sentence(controls)}",
@@ -174,6 +210,17 @@ def render_results_section(
             f"({agreement['n_disagree']} disagreements)."
         )
 
+    lines += ["", "### Selective answering", ""]
+    for signal in (headline_signal, best_conf, "combination"):
+        rows = metrics[(metrics["split"] == "test") & (metrics["signal"] == signal)]
+        if rows.empty:
+            continue
+        row = rows.iloc[0]
+        lines.append(
+            f"- {signal_label(signal)}: {row['acc_at_80']:.3f} accuracy at 80% "
+            f"coverage, {row['acc_at_50']:.3f} at 50%, against "
+            f"{1 - row['error_rate']:.3f} answering everything (TriviaQA test)."
+        )
     lines += ["", "### Accuracy and calibration", "", f"{accuracy_sentence(accuracy)}", ""]
     if len(calibration):
         for _, row in calibration.iterrows():

@@ -142,7 +142,7 @@ def test_comparison_sentence_reads_the_interval_not_the_point():
     sentence = report.comparison_sentence(
         comparisons, split="test", other="conf_first_token_prob"
     )
-    assert "indistinguishable" in sentence
+    assert "indistinguishable from First-token probability" in sentence
     assert "+0.020" in sentence and "-0.010" in sentence
 
 
@@ -157,12 +157,29 @@ def test_comparison_sentence_when_the_probe_wins_and_loses():
             }]
         )
 
-    assert "beats it" in report.comparison_sentence(
-        frame(0.02, 0.08, True, False), split="test", other="c"
+    assert "beats c" in report.comparison_sentence(
+        frame(0.02, 0.08, True, False), split="test", other="c", reference="p"
     )
-    assert "loses to it" in report.comparison_sentence(
-        frame(-0.09, -0.02, False, False), split="test", other="c"
+    assert "loses to c" in report.comparison_sentence(
+        frame(-0.09, -0.02, False, False), split="test", other="c", reference="p"
     )
+
+
+def test_comparison_sentence_names_the_other_signal():
+    comparisons = pd.DataFrame(
+        [{
+            "split": "test", "reference": "combination", "other": "conf_selfconsistency",
+            "other_label": "Self-consistency (8 samples, T=1.0)",
+            "auroc_difference": 0.04, "auroc_difference_low": 0.01,
+            "auroc_difference_high": 0.07,
+            "reference_better": True, "indistinguishable": False,
+        }]
+    )
+    sentence = report.comparison_sentence(
+        comparisons, split="test", other="conf_selfconsistency",
+        reference="combination", subject="the combination",
+    )
+    assert "the combination beats Self-consistency (8 samples, T=1.0)" in sentence
 
 
 def test_controls_sentence_reports_the_range_not_just_the_mean():

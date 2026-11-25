@@ -202,7 +202,16 @@ def evaluate_command(
     metrics = evaluate.metrics_table(scores, n_boot=n_boot)
     io.write_csv(io.results_dir() / "metrics.csv", metrics.round(5))
 
-    comparisons = evaluate.comparison_table(scores, headline_signal, n_boot=n_boot)
+    # Two reference signals: the probe (does it beat the baselines?) and the
+    # combination (does adding the probe to the best confidence signal beat
+    # either alone?). Both paired on the same resampled questions.
+    comparisons = pd.concat(
+        [
+            evaluate.comparison_table(scores, headline_signal, n_boot=n_boot),
+            evaluate.comparison_table(scores, "combination", n_boot=n_boot),
+        ],
+        ignore_index=True,
+    )
     io.write_csv(io.results_dir() / "comparisons.csv", comparisons.round(5))
 
     # The baseline the headline runs against was chosen on validation by

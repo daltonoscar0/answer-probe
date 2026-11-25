@@ -200,16 +200,23 @@ def test_accuracy_at_coverage_beats_answering_everything(pipeline):
 
 
 def test_comparisons_are_paired_and_cover_every_other_signal(pipeline):
+    """Two reference signals: the probe, and the probe+confidence combination."""
     root, _ = pipeline
     comparisons = pd.read_csv(_results(root) / "comparisons.csv")
-    assert (comparisons["reference"] == "probe_before_linear").all()
-    assert "probe_before_linear" not in set(comparisons["other"])
+    assert set(comparisons["reference"]) == {"probe_before_linear", "combination"}
+    for reference, group in comparisons.groupby("reference"):
+        # Nothing is ever compared with itself.
+        assert reference not in set(group["other"])
+        assert set(group["split"]) == {TEST, SHIFT}
     assert (
         comparisons["auroc_difference_low"] <= comparisons["auroc_difference"]
     ).all()
     assert (
         comparisons["auroc_difference"] <= comparisons["auroc_difference_high"]
     ).all()
+    # The combination against each of its own two inputs is reported.
+    combo = comparisons[comparisons["reference"] == "combination"]
+    assert "probe_before_linear" in set(combo["other"])
 
 
 def test_calibration_bins_account_for_every_question(pipeline):
