@@ -12,8 +12,36 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
+import ml_dtypes
 import numpy as np
 import pandas as pd
+
+# Activations are stored as bfloat16: two bytes per value like float16, but with
+# float32's exponent range, so Gemma's large residual outliers are nowhere near
+# the ceiling and nothing is clipped. It is also the dtype the model computes
+# in, so the stored states are exactly the states the model had.
+#
+# The .npy format cannot record a dtype it does not know, so the bit patterns go
+# to disk as uint16 and are viewed back on load. The true dtype is in the
+# manifest, and uint16 keeps the files readable by numpy alone.
+BF16 = ml_dtypes.bfloat16
+
+
+def pack_bfloat16(array: np.ndarray) -> np.ndarray:
+    """bfloat16 -> the uint16 bit patterns written to disk."""
+    array = np.asarray(array)
+    if array.dtype != BF16:
+        array = array.astype(BF16)
+    return array.view(np.uint16)
+
+
+def unpack_bfloat16(array: np.ndarray) -> np.ndarray:
+    """uint16 (or an unrecognised 2-byte dtype) read from disk -> bfloat16."""
+    if array.dtype == BF16:
+        return array
+    if array.dtype.itemsize != 2:
+        raise ValueError(f"expected a 2-byte dtype for bfloat16 storage, got {array.dtype}")
+    return array.view(BF16)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -147,10 +175,13 @@ class Run:
         path = self.root / "activations" / f"hidden_{position}.npy"
         if not path.exists():
             raise RunNotFound(f"missing {path}; run notebooks/extract.ipynb first")
-        return np.load(path, mmap_mode="r")
+        return unpack_bfloat16(np.load(path, mmap_mode="r"))
 
     def layer(self, position: str, layer: int, qids: list[str]) -> np.ndarray:
         """Hidden states at one layer for the given questions, as float32.
+
+        Stored as bfloat16 and widened to float32 here: every probe, the
+        standardiser and the metrics all run in float32, and widening is exact.
 
         Returns `[len(qids), hidden_size]` in the order `qids` was given.
         """
@@ -212,8 +243,8 @@ def write_run_folder(
     if before.shape[0] != len(qids):
         raise ValueError(f"{before.shape[0]} activation rows for {len(qids)} question ids")
 
-    np.save(root / "activations" / "hidden_before.npy", before)
-    np.save(root / "activations" / "hidden_after.npy", after)
+    np.save(root / "activations" / "hidden_before.npy", pack_bfloat16(before))
+    np.save(root / "activations" / "hidden_after.npy", pack_bfloat16(after))
     write_json(root / "activations" / "index.json", {"qids": list(qids)})
 
     write_jsonl(root / "questions.jsonl", questions)
@@ -233,7 +264,11 @@ def write_run_folder(
             "n_questions": len(qids),
             "n_layers": int(before.shape[1]),
             "hidden_size": int(before.shape[2]),
-            "activation_dtype": str(before.dtype),
+            "activation_dtype": str(np.dtype(BF16)),
+            "activation_storage": (
+                "uint16 bit patterns in the .npy files; view as bfloat16 "
+                "(answer_probe.io.unpack_bfloat16)"
+            ),
         },
     )
     return root

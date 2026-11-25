@@ -10,6 +10,9 @@ keywords = ["interpretability", "reliability", "probing", "jax", "gemma", "hallu
 dependencies = [
     "jax>=0.4.35",
     "jaxlib>=0.4.35",
+    # bfloat16 as a numpy dtype, for reading the activation files. Comes with
+    # jax, but io.py imports it directly so it is named directly.
+    "ml-dtypes>=0.4",
     "optax>=0.2.3",
     "numpy>=1.26",
     "pandas>=2.1",

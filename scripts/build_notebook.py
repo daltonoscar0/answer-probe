@@ -71,11 +71,10 @@ code(
 # the first 200 questions, and again at the end of the greedy pass.
 MODEL = "gemma3-1b-it"
 
-# bfloat16 is what Gemma was trained in. A T4 is Turing, which has no bfloat16
-# tensor cores, so XLA runs these matmuls through float32 -- correct, but
-# without the speedup an A100 would give. float16 is faster on a T4 and riskier:
-# the residual stream reaches ~2e4 at the deepest layers against a float16
-# ceiling of 6.55e4.
+# bfloat16 is what Gemma was trained in, and what the activation files store,
+# so the saved residual stream is exactly the one the model computed. A T4 is
+# Turing and has no bfloat16 tensor cores, so XLA runs these matmuls through
+# float32 -- correct, but without the speedup an A100 would give.
 MODEL_DTYPE = "bfloat16"
 
 MAX_NEW_TOKENS = 32
@@ -220,13 +219,12 @@ md("## 4. Load the model")
 code(
     '''
 from answer_probe.extract import (
+    BF16_MAX,
     build_sampler,
-    extract_batch,
     generate,
     load_model,
     n_layers_recorded,
     terminator_ids,
-    to_float16,
 )
 from answer_probe.prompts import INSTRUCTION, PROMPT_VERSION, build_prompt
 from answer_probe.extract import CHECKPOINTS
@@ -405,8 +403,10 @@ manifest = {
         if group and set(group) <= {r["qid"] for r in selfcons}
     }),
     "layer_indexing": "0 = embeddings, 1..N = block outputs, N+1 = final RMSNorm",
+    "activation_dtype": "bfloat16",
     "max_abs_residual": greedy.max_abs_residual,
-    "float16_values_clipped": int(greedy.values_clipped),
+    "bfloat16_ceiling": BF16_MAX,
+    "values_clipped": int(greedy.values_out_of_range),
     "answer_probe_version": answer_probe.__version__,
     "jax_version": jax.__version__,
     "gemma_version": getattr(gm, "__version__", "unknown"),

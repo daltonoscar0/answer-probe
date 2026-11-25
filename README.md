@@ -143,10 +143,18 @@ brief.
 A T4 is Turing and has no bfloat16 tensor cores, so XLA runs these matmuls
 through float32: correct, but without the speedup newer hardware would give.
 
-Hidden states are stored as float16. The residual stream has large outliers —
-measured at 2.2×10⁴ on the 270M model against a float16 ceiling of 6.55×10⁴ —
-so values are clipped rather than allowed to overflow to infinity, and both the
-largest magnitude seen and the number of clipped values go into the manifest.
+Hidden states are stored as **bfloat16**: two bytes per value, the same as
+float16, but with float32's exponent range. This matters because the residual
+stream has large outliers — measured at 2.4×10⁴ on the 270M model, within a
+factor of three of the float16 ceiling of 6.55×10⁴, and the 1B has 26 blocks
+rather than 18 — so float16 was one deeper model away from clipping. bfloat16's
+ceiling is 3.4×10³⁸, so nothing is clipped; the greedy pass counts
+out-of-range values and refuses to finish if any appear, and the manifest
+records both the count and the largest magnitude seen. bfloat16 is also the
+dtype the model computes in, so the stored states are *exactly* the states the
+model had, where the float16 cast would also have re-rounded them. The `.npy`
+format cannot carry the dtype, so the bit patterns are written as `uint16` and
+viewed back on load; the probes see float32, and widening is exact.
 
 ## Data
 

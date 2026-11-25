@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from answer_probe.extract import extract_batch, generate, to_float16
+from answer_probe.extract import BF16_MAX, extract_batch, generate, to_bfloat16
 from answer_probe.normalize import is_correct, normalize_answer
 from answer_probe.prompts import build_prompt
 from answer_probe.shards import Progress, ShardWriter, format_duration
@@ -34,7 +34,7 @@ class GreedyResult:
     before: np.ndarray
     after: np.ndarray
     max_abs_residual: float = 0.0
-    values_clipped: int = 0
+    values_out_of_range: int = 0
     elapsed_seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
 
@@ -91,7 +91,7 @@ def run_greedy_pass(
     notes: list[str] = []
     announced = False
     max_abs = 0.0
-    clipped = 0
+    out_of_range = 0
 
     for block_start in range(start, total, gen_batch):
         block = questions[block_start : block_start + gen_batch]
@@ -112,9 +112,9 @@ def run_greedy_pass(
                 answer_ids[chunk:upto],
                 max_answer_tokens=max_new_tokens,
             )
-            before16, clipped_before = to_float16(signals.before)
-            after16, clipped_after = to_float16(signals.after)
-            clipped += clipped_before + clipped_after
+            before16, out_before = to_bfloat16(signals.before)
+            after16, out_after = to_bfloat16(signals.after)
+            out_of_range += out_before + out_after
             max_abs = max(
                 max_abs,
                 float(np.abs(signals.before).max()),
@@ -162,17 +162,26 @@ def run_greedy_pass(
             f"delete {shard_dir} and run again"
         )
 
+    # Nothing should ever be clipped at bfloat16's range; if something were, the
+    # stored states would not be the states the model had, and every number
+    # downstream would be quietly wrong.
+    if out_of_range:
+        raise RuntimeError(
+            f"{out_of_range} residual values exceed the bfloat16 range ({BF16_MAX:.3g}); "
+            "the activations on disk would be clipped and cannot be used"
+        )
+
     log(f"Greedy pass done in {format_duration(progress.elapsed())}.")
     log(
-        f"Largest residual magnitude {max_abs:.0f} against a float16 ceiling of "
-        f"65504; {clipped} values clipped."
+        f"Largest residual magnitude {max_abs:.4g} against a bfloat16 ceiling of "
+        f"{BF16_MAX:.3g}; 0 values clipped."
     )
     return GreedyResult(
         generations=generations,
         before=before,
         after=after,
         max_abs_residual=max_abs,
-        values_clipped=clipped,
+        values_out_of_range=out_of_range,
         elapsed_seconds=progress.elapsed(),
         notes=notes,
     )

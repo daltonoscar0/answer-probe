@@ -14,8 +14,8 @@ data/
     splits.json
     data_summary.csv
     activations/
-      hidden_before.npy         float16 [questions, layers, hidden]
-      hidden_after.npy          float16 [questions, layers, hidden]
+      hidden_before.npy         bfloat16 [questions, layers, hidden], stored as uint16
+      hidden_after.npy          bfloat16 [questions, layers, hidden], stored as uint16
       index.json                question id order of the array rows
   human_grading_sheet.jsonl     written by `aprobe label`, without the labels
   human_labels.jsonl            your grades, written by `aprobe grade`  (committed)

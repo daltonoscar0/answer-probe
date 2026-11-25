@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 from typer.testing import CliRunner
@@ -339,3 +340,47 @@ def test_bootstrap_intervals_are_reproducible(pipeline):
     assert result.exit_code == 0, result.output
     again = pd.read_csv(_results(root) / "metrics.csv")
     pd.testing.assert_frame_equal(first, again)
+
+
+def test_activations_are_stored_as_bfloat16_losslessly(pipeline):
+    """The stored states must be exactly the states handed to the writer.
+
+    bfloat16 is what the model computes in, so a bfloat16 round trip is exact.
+    The .npy format cannot carry the dtype, so the bytes are uint16 on disk and
+    viewed back; this checks both halves of that.
+    """
+    import ml_dtypes
+
+    import fake_run as fixture
+    from answer_probe.io import unpack_bfloat16
+
+    root, _ = pipeline
+    run_dir = root / "run"
+    raw = np.load(run_dir / "activations" / "hidden_before.npy", mmap_mode="r")
+    assert raw.dtype == np.uint16, "stored as uint16 bit patterns"
+    viewed = unpack_bfloat16(raw)
+    assert viewed.dtype == ml_dtypes.bfloat16
+
+    expected = fixture.build(n_main=400, n_shift=150, seed=0)["before"]
+    assert expected.dtype == ml_dtypes.bfloat16
+    np.testing.assert_array_equal(
+        np.asarray(viewed).astype(np.float32), expected.astype(np.float32)
+    )
+
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["activation_dtype"] == "bfloat16"
+    assert "bfloat16" in manifest["activation_storage"]
+
+
+def test_layers_are_widened_to_float32_for_probing(pipeline):
+    from answer_probe import io as apio
+
+    root, _ = pipeline
+    run = apio.load_run(root / "run")
+    qids = json.loads((_results(root) / "splits.json").read_text())["splits"][TEST][:5]
+    layer = run.layer("before", 2, qids)
+    assert layer.dtype == np.float32
+    assert layer.shape == (5, run.hidden_size)
+    assert np.all(np.isfinite(layer))
+    # Widening bfloat16 to float32 is exact, so a second read agrees bit for bit.
+    np.testing.assert_array_equal(layer, run.layer("before", 2, qids))

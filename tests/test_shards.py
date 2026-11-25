@@ -1,15 +1,18 @@
 """Checkpointing has to survive a Colab disconnect, so it is tested like one."""
 
+import ml_dtypes
 import numpy as np
 import pytest
 
 from answer_probe.shards import Progress, ShardWriter, format_duration
 
+BF16 = ml_dtypes.bfloat16
+
 LAYERS, HIDDEN = 4, 6
 
 
 def row(value):
-    return np.full((LAYERS, HIDDEN), value, dtype=np.float16)
+    return np.full((LAYERS, HIDDEN), value, dtype=BF16)
 
 
 def write_n(directory, start, stop, shard_size=10):
@@ -26,7 +29,7 @@ def test_records_and_arrays_round_trip(tmp_path):
     records, before, after = ShardWriter(tmp_path, shard_size=10).read_all()
     assert [r["qid"] for r in records] == [f"q{i}" for i in range(25)]
     assert before.shape == (25, LAYERS, HIDDEN)
-    assert before.dtype == np.float16
+    assert before.dtype == BF16
     np.testing.assert_array_equal(before[7], row(7))
     np.testing.assert_array_equal(after[7], row(-7))
 

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import numpy as np
 
+from answer_probe.io import pack_bfloat16, unpack_bfloat16
+
 
 class ShardWriter:
     """Append records (and optionally activation rows), checkpointing in blocks."""
@@ -84,10 +86,12 @@ class ShardWriter:
     def _write(self, count: int) -> None:
         npz, jsonl = self.paths(self._next_index)
         if self.with_arrays:
+            # Packed to uint16 for the same reason as the final run folder: the
+            # .npy/.npz format cannot carry the bfloat16 dtype itself.
             np.savez(
                 npz,
-                before=np.stack(self._before[:count]),
-                after=np.stack(self._after[:count]),
+                before=pack_bfloat16(np.stack(self._before[:count])),
+                after=pack_bfloat16(np.stack(self._after[:count])),
             )
             self._before = self._before[count:]
             self._after = self._after[count:]
@@ -109,8 +113,8 @@ class ShardWriter:
             )
             if self.with_arrays:
                 with np.load(npz) as payload:
-                    before.append(payload["before"])
-                    after.append(payload["after"])
+                    before.append(unpack_bfloat16(payload["before"]))
+                    after.append(unpack_bfloat16(payload["after"]))
         if not self.with_arrays:
             return records, None, None
         if not before:

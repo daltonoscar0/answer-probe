@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import ml_dtypes
 import numpy as np
 
 
@@ -238,17 +239,34 @@ def extract_batch(
     )
 
 
-# fp16 is what the activation files are stored as. Gemma's residual stream has
-# large outliers, so values are clipped to the fp16 range rather than allowed to
-# become inf, and the number of clipped values is recorded in the manifest.
-FP16_MAX = float(np.finfo(np.float16).max)
+# bfloat16 is what the activation files are stored as: two bytes per value, the
+# same as float16, but with float32's exponent range. Gemma's residual stream
+# has large outliers -- measured at 2.2e4 on the 270M model, against a float16
+# ceiling of 6.55e4 -- and bfloat16's ceiling of 3.4e38 puts them nowhere near
+# it, so nothing is clipped. It is also the dtype the model computes in, so
+# saving the states costs no precision at all: the float16 cast this replaced
+# both clipped and re-rounded.
+BF16 = ml_dtypes.bfloat16
+BF16_MAX = float(np.finfo(BF16).max)
 
 
-def to_float16(array: np.ndarray) -> tuple[np.ndarray, int]:
-    """Cast to float16, clipping out-of-range values. Returns (array, n_clipped)."""
-    finite = np.nan_to_num(array, nan=0.0, posinf=FP16_MAX, neginf=-FP16_MAX)
-    n_clipped = int(np.sum(np.abs(finite) > FP16_MAX))
-    return np.clip(finite, -FP16_MAX, FP16_MAX).astype(np.float16), n_clipped
+def to_bfloat16(array: np.ndarray) -> tuple[np.ndarray, int]:
+    """Cast to bfloat16. Returns (array, n_out_of_range), the latter always 0.
+
+    The count is kept and recorded so the claim "nothing was clipped" is a
+    measurement rather than an assumption; `run_greedy_pass` asserts it.
+    Non-finite values are a real failure and raise rather than being quietly
+    mapped to something finite.
+    """
+    array = np.asarray(array)
+    if not np.isfinite(array).all():
+        n_bad = int((~np.isfinite(array)).sum())
+        raise ValueError(
+            f"{n_bad} non-finite values in the residual stream; the forward pass "
+            "produced inf or nan and the run cannot be trusted"
+        )
+    n_out_of_range = int(np.sum(np.abs(array) > BF16_MAX))
+    return array.astype(BF16), n_out_of_range
 
 
 # The instruction-tuned Gemma 3 text models that fit a T4 in bfloat16, with the

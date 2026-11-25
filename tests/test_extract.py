@@ -16,13 +16,14 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 
 from answer_probe.extract import (  # noqa: E402
-    FP16_MAX,
+    BF16,
+    BF16_MAX,
     PAD_ID,
     extract_batch,
     n_layers_recorded,
     strip_terminators,
     tiny_model,
-    to_float16,
+    to_bfloat16,
 )
 
 NUM_LAYERS = 4
@@ -153,23 +154,43 @@ def test_strip_terminators():
     assert strip_terminators([], {1}) == []
 
 
-def test_to_float16_clips_instead_of_overflowing():
-    array = np.array([[1.0, 1e6, -1e6, np.inf, np.nan]], dtype=np.float32)
-    out, n_clipped = to_float16(array)
-    assert out.dtype == np.float16
-    assert np.all(np.isfinite(out))
-    assert out[0, 0] == pytest.approx(1.0)
-    assert out[0, 1] == pytest.approx(FP16_MAX)
-    assert out[0, 2] == pytest.approx(-FP16_MAX)
-    assert n_clipped == 2  # the two 1e6 values; inf/nan are mapped first
+def test_bfloat16_holds_the_outliers_float16_would_have_clipped():
+    """2.2e4 was measured on the real 270M model; float16 tops out at 6.55e4."""
+    array = np.array([[1.0, 2.2e4, -6.6e4, 1e30, -1e30]], dtype=np.float32)
+    out, n_out_of_range = to_bfloat16(array)
+    assert out.dtype == BF16
+    assert n_out_of_range == 0
+    assert np.all(np.isfinite(out.astype(np.float32)))
+    # Nothing is pinned to a ceiling: every value keeps its own magnitude.
+    widened = out.astype(np.float32)
+    assert widened[0, 1] == pytest.approx(2.2e4, rel=0.01)
+    assert widened[0, 2] == pytest.approx(-6.6e4, rel=0.01)
+    assert widened[0, 3] == pytest.approx(1e30, rel=0.01)
+    # The same values in float16 would have saturated.
+    with np.errstate(over="ignore"):
+        assert np.isinf(np.float16(1e30))
 
 
-def test_to_float16_leaves_ordinary_values_alone():
+def test_to_bfloat16_is_lossless_for_values_the_model_computed():
+    """The model computes in bfloat16, so storing bfloat16 costs no precision."""
     rng = np.random.default_rng(0)
-    array = rng.normal(size=(4, 8)).astype(np.float32)
-    out, n_clipped = to_float16(array)
-    assert n_clipped == 0
-    np.testing.assert_allclose(out.astype(np.float32), array, rtol=1e-3, atol=1e-3)
+    native = (rng.normal(size=(4, 8)) * 1e3).astype(np.float32).astype(BF16)
+    widened = native.astype(np.float32)
+    out, n_out_of_range = to_bfloat16(widened)
+    assert n_out_of_range == 0
+    np.testing.assert_array_equal(out.astype(np.float32), widened)
+
+
+def test_to_bfloat16_rejects_non_finite_values():
+    for bad in (np.inf, -np.inf, np.nan):
+        array = np.array([[1.0, bad]], dtype=np.float32)
+        with pytest.raises(ValueError, match="non-finite"):
+            to_bfloat16(array)
+
+
+def test_bfloat16_range_covers_float32():
+    assert BF16_MAX > 3e38
+    assert BF16_MAX > float(np.finfo(np.float16).max) * 1e30
 
 
 def test_checkpoint_registry_matches_the_library():

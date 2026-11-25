@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("gemma", reason="needs the 'extract' extra")
 
-import jax.numpy as jnp  # noqa: E402
+import ml_dtypes  # noqa: E402
 import pandas as pd  # noqa: E402
 from typer.testing import CliRunner  # noqa: E402
 
@@ -141,7 +141,8 @@ def test_greedy_pass_answers_every_question_in_order(gpu_path):
         n_layers_recorded(gpu_path["model"]),
         32,
     )
-    assert greedy.before.dtype == jnp.float16
+    assert greedy.before.dtype == ml_dtypes.bfloat16
+    assert greedy.values_out_of_range == 0
     for record in greedy.generations:
         assert 0.0 < record["first_token_prob"] <= 1.0
         assert record["first_token_entropy"] >= 0.0

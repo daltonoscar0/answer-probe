@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import ml_dtypes
 import numpy as np
 import pandas as pd
 
@@ -128,8 +129,8 @@ def build(
         "questions": questions,
         "generations": generations,
         "selfconsistency": selfcons,
-        "before": before.astype(np.float16),
-        "after": after.astype(np.float16),
+        "before": before.astype(ml_dtypes.bfloat16),
+        "after": after.astype(ml_dtypes.bfloat16),
         "split_map": split_map,
         "wrong": wrong.astype(int),
     }
