@@ -231,13 +231,38 @@ def test_risk_coverage_curve_is_monotone_in_coverage(pipeline):
     assert rc["accuracy"].between(0, 1).all()
 
 
-def test_report_prints_a_markdown_table(pipeline):
+def test_report_prints_the_whole_generated_section(pipeline):
     _, outputs = pipeline
     text = outputs["report"]
-    assert text.startswith("| Signal |")
+    assert text.startswith("### Headline")
+    assert "| Signal | TriviaQA test AUROC |" in text
     assert "chosen on the validation split" in text
     assert "Shuffled labels" in text
+    assert "### Did the probe beat the model's own confidence?" in text
+    assert "### Controls" in text
+    assert "Where the probe and the confidence signal disagree" in text
     assert text.count("\n|") >= 5
+
+
+def test_report_can_fill_in_a_readme(pipeline, tmp_path):
+    from typer.testing import CliRunner
+
+    from answer_probe import cli, report
+
+    root, _ = pipeline
+    io.set_dirs(data=root / "data", results=root / "results")
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        f"# t\n\n{report.BEGIN_MARKER}\nno run yet\n{report.END_MARKER}\n\ntail\n"
+    )
+    result = CliRunner().invoke(
+        cli.app, ["report", "--write", "--readme", str(readme)]
+    )
+    assert result.exit_code == 0, result.output
+    text = readme.read_text()
+    assert "no run yet" not in text
+    assert "| Signal | TriviaQA test AUROC |" in text
+    assert text.startswith("# t") and text.rstrip().endswith("tail")
 
 
 def test_label_command_writes_a_blind_grading_sheet(pipeline):
