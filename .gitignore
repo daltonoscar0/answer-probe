@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv*/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+.ipynb_checkpoints/
+
+# Notebook outputs: raw questions and the activation tensors are large and
+# re-derivable from notebooks/extract.ipynb. Everything in results/ is committed.
+data/raw/
+data/activations/
