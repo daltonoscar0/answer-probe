@@ -21,8 +21,8 @@ from answer_probe.extract import (  # noqa: E402
     extract_batch,
     n_layers_recorded,
     strip_terminators,
-    to_float16,
     tiny_model,
+    to_float16,
 )
 
 NUM_LAYERS = 4

@@ -55,7 +55,10 @@ NQ_OPEN = DatasetSpec(
     hf_config="nq_open",
     split="validation",
     license="CC BY-SA 3.0",
-    citation="Kwiatkowski et al. (2019), Natural Questions, TACL; open variant from Lee et al. (2019)",
+    citation=(
+        "Kwiatkowski et al. (2019), Natural Questions, TACL; "
+        "open variant from Lee, Chang & Toutanova (2019), ACL"
+    ),
     url="https://huggingface.co/datasets/google-research-datasets/nq_open",
     n_sample=N_SHIFT,
     seed=SHIFT_SEED,

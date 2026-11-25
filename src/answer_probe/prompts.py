@@ -21,7 +21,10 @@ INSTRUCTION = (
 # next token the model produces is the first token of its answer. BOS is added
 # by the tokenizer (`encode(..., add_bos=True)`), not here.
 TEMPLATE = (
-    "<start_of_turn>user\n{instruction}\n\nQuestion: {question}<end_of_turn>\n<start_of_turn>model\n"
+    "<start_of_turn>user\n"
+    "{instruction}\n\nQuestion: {question}"
+    "<end_of_turn>\n"
+    "<start_of_turn>model\n"
 )
 
 PROMPT_VERSION = "v1"
